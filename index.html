@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#2563eb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Bangalore Builder Properties 2026</title>
+  <style>
+    /* Light theme (default) */
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --surface-elevated: #ffffff;
+      --border: #e2e8f0;
+      --text: #1e293b;
+      --text-secondary: #64748b;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --accent-soft: #dbeafe;
+      --success: #059669;
+      --success-soft: #d1fae5;
+      --warning: #d97706;
+      --warning-soft: #fef3c7;
+      --info: #0891b2;
+      --info-soft: #cffafe;
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow: 0 1px 3px rgba(0,0,0,0.08);
+      --shadow-card: 0 4px 12px rgba(0,0,0,0.06);
+      --header-bg: linear-gradient(135deg, #2563eb 0%, #7c3aed 50%, #0891b2 100%);
+    }
+    /* Dark theme */
+    html.dark {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface-elevated: #334155;
+      --border: #334155;
+      --text: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --accent: #60a5fa;
+      --accent-hover: #93c5fd;
+      --accent-soft: #1e3a5f;
+      --success: #34d399;
+      --success-soft: #064e3b;
+      --warning: #fbbf24;
+      --warning-soft: #422006;
+      --info: #22d3ee;
+      --info-soft: #164e63;
+      --shadow: 0 1px 3px rgba(0,0,0,0.3);
+      --shadow-card: 0 4px 12px rgba(0,0,0,0.25);
+      --header-bg: linear-gradient(135deg, #1e3a8a 0%, #4c1d95 50%, #155e75 100%);
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .header {
+      background: var(--header-bg);
+      color: #fff;
+      padding: 1.25rem 1rem 1.5rem;
+      padding-left: max(1rem, env(safe-area-inset-left));
+      padding-right: max(1rem, env(safe-area-inset-right));
+      margin-bottom: 1.5rem;
+      box-shadow: var(--shadow);
+    }
+    .header-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    h1 {
+      font-size: clamp(1.25rem, 4vw, 1.6rem);
+      font-weight: 700;
+      margin: 0;
+      letter-spacing: -0.02em;
+    }
+    .subtitle {
+      color: rgba(255,255,255,0.9);
+      font-size: 0.875rem;
+      margin: 0.25rem 0 0 0;
+    }
+    .theme-toggle {
+      flex-shrink: 0;
+      width: 44px;
+      height: 44px;
+      border-radius: var(--radius-sm);
+      border: 2px solid rgba(255,255,255,0.4);
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      transition: background 0.2s, transform 0.15s;
+    }
+    .theme-toggle:hover { background: rgba(255,255,255,0.25); }
+    .theme-toggle:active { transform: scale(0.96); }
+    .main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 1rem 2rem;
+      padding-left: max(1rem, env(safe-area-inset-left));
+      padding-right: max(1rem, env(safe-area-inset-right));
+      padding-bottom: max(2rem, env(safe-area-inset-bottom));
+    }
+    .load-msg {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: flex-end;
+      padding: 1rem 1.25rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 1.5rem;
+      box-shadow: var(--shadow);
+    }
+    .filter-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+    .filter-group label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .filter-group input, .filter-group select {
+      padding: 0.6rem 0.75rem;
+      min-height: 44px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 0.9rem;
+      min-width: 120px;
+      -webkit-appearance: none;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2364748b' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.75rem center;
+      padding-right: 2rem;
+    }
+    .filter-group input { background-image: none; padding-right: 0.75rem; }
+    .filter-group select { cursor: pointer; }
+    .filter-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      margin-left: auto;
+    }
+    button {
+      padding: 0.6rem 1.1rem;
+      min-height: 44px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.15s;
+    }
+    button:hover { background: var(--accent-hover); }
+    button:active { transform: scale(0.98); }
+    button.secondary {
+      background: var(--border);
+      color: var(--text);
+    }
+    button.secondary:hover { background: var(--text-secondary); color: var(--surface); }
+    #count {
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+      gap: 1.25rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      box-shadow: var(--shadow-card);
+      transition: box-shadow 0.2s, transform 0.2s;
+    }
+    .card:hover {
+      box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    }
+    html.dark .card:hover {
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }
+    .card .name {
+      font-weight: 700;
+      font-size: 1.05rem;
+      line-height: 1.35;
+      color: var(--text);
+    }
+    .card .builder {
+      color: var(--accent);
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .card .locality {
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .card .locality::before {
+      content: '';
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--info);
+    }
+    .card .price {
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: var(--success);
+    }
+    .card .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      font-size: 0.8rem;
+    }
+    .card .meta span {
+      background: var(--accent-soft);
+      color: var(--accent);
+      padding: 0.35rem 0.65rem;
+      border-radius: 999px;
+      font-weight: 500;
+    }
+    .card .meta span.status-new_launch { background: var(--info-soft); color: var(--info); }
+    .card .meta span.status-under_construction { background: var(--warning-soft); color: var(--warning); }
+    .card .meta span.status-ready_to_move { background: var(--success-soft); color: var(--success); }
+    .card .meta span.status-default { background: var(--accent-soft); color: var(--accent); }
+    .card .status { text-transform: capitalize; }
+    .card a.card-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      margin-top: auto;
+      padding-top: 0.5rem;
+      color: var(--accent);
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    .card a.card-link:hover { color: var(--accent-hover); text-decoration: underline; }
+    .empty {
+      grid-column: 1 / -1;
+      text-align: center;
+      color: var(--text-secondary);
+      padding: 3rem 1.5rem;
+      font-size: 1rem;
+    }
+    .card .text-wrap { overflow: hidden; }
+    .card .text-wrap .full { display: none; }
+    .card .text-wrap.expanded .short { display: none; }
+    .card .text-wrap.expanded .full { display: inline; }
+    .card .read-more {
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-left: 0.25rem;
+    }
+    .card .read-more:hover { text-decoration: underline; }
+    @media (max-width: 640px) {
+      .header-inner { flex-direction: column; align-items: flex-start; }
+      .filters { flex-direction: column; align-items: stretch; }
+      .filter-group input, .filter-group select { min-width: 0; width: 100%; }
+      .filter-actions { margin-left: 0; margin-top: 0.5rem; flex-wrap: wrap; }
+      .filter-actions button { flex: 1; min-width: 120px; }
+      #count { width: 100%; text-align: center; }
+    }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <div>
+        <h1>Bangalore Builder Properties</h1>
+        <p class="subtitle">Upcoming · Under construction · Ready to move · New launch (2026)</p>
+      </div>
+      <button type="button" class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">🌙</button>
+    </div>
+  </header>
+  <main class="main">
+
+  <div class="load-msg" id="loadMsg">Loading data…</div>
+
+  <div class="filters" id="filters" style="display: none;">
+    <div class="filter-group">
+      <label>Price min (Lakhs)</label>
+      <input type="number" id="priceMin" placeholder="e.g. 50" min="0" step="10">
+    </div>
+    <div class="filter-group">
+      <label>Price max (Lakhs)</label>
+      <input type="number" id="priceMax" placeholder="e.g. 300" min="0" step="10">
+    </div>
+    <div class="filter-group">
+      <label>Handover year</label>
+      <select id="handoverYear">
+        <option value="">Any</option>
+        <option value="2026">2026</option>
+        <option value="2027">2027</option>
+        <option value="2028">2028</option>
+        <option value="2029">2029</option>
+        <option value="2030">2030</option>
+        <option value="2031">2031</option>
+        <option value="2032">2032</option>
+        <option value="ready">Ready to move</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>Status</label>
+      <select id="status">
+        <option value="">All</option>
+        <option value="new_launch">New launch</option>
+        <option value="under_construction">Under construction</option>
+        <option value="ready_to_move">Ready to move</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>Locality</label>
+      <input type="text" id="locality" placeholder="e.g. Whitefield">
+    </div>
+    <div class="filter-group">
+      <label>Builder</label>
+      <input type="text" id="builder" placeholder="e.g. Prestige">
+    </div>
+    <div class="filter-group">
+      <label>Sort by handover</label>
+      <select id="sortHandover">
+        <option value="">Default</option>
+        <option value="recent">Recent handover first</option>
+        <option value="late">Late handover first</option>
+      </select>
+    </div>
+    <div class="filter-actions">
+      <button type="button" id="apply">Apply</button>
+      <button type="button" id="reset" class="secondary">Reset</button>
+      <span id="count"></span>
+    </div>
+  </div>
+
+  <div class="cards" id="cards"></div>
+  </main>
+
+  <script>
+    let allProperties = [];
+
+    function showCount(n, total) {
+      const el = document.getElementById('count');
+      el.textContent = total === 0 ? 'No data' : `Showing ${n} of ${total} properties`;
+    }
+
+    const MAX_VISIBLE = 55;
+
+    function wrapLongText(label, text, idPrefix) {
+      if (text == null || text === '') return '';
+      const safe = escapeHtml(text);
+      if (text.length <= MAX_VISIBLE) return label ? `${escapeHtml(label)} ${safe}` : safe;
+      const uid = idPrefix + Math.random().toString(36).slice(2, 9);
+      const short = escapeHtml(text.slice(0, MAX_VISIBLE).trim()) + '…';
+      return label
+        ? `${escapeHtml(label)} <span class="text-wrap" id="${uid}"><span class="short">${short}</span><span class="full">${safe}</span><a class="read-more" data-for="${uid}">Read more</a></span>`
+        : `<span class="text-wrap" id="${uid}"><span class="short">${short}</span><span class="full">${safe}</span><a class="read-more" data-for="${uid}">Read more</a></span>`;
+    }
+
+    function renderCards(list) {
+      const container = document.getElementById('cards');
+      if (!list.length) {
+        container.innerHTML = '<p class="empty">No properties match the filters.</p>';
+        return;
+      }
+      container.innerHTML = list.map(p => {
+        const statusLabel = (p.status || '').replace(/_/g, ' ');
+        const handoverHtml = p.handover ? wrapLongText('Handover:', p.handover, 'ho') : '';
+        const nameHtml = (p.name != null && p.name !== '') ? (wrapLongText('', p.name, 'nm') || escapeHtml(p.name)) : '';
+        const localityHtml = (p.locality != null && p.locality !== '') ? (wrapLongText('', p.locality, 'loc') || escapeHtml(p.locality)) : '';
+        return `
+          <article class="card">
+            <div class="name">${nameHtml}</div>
+            ${p.builder ? `<div class="builder">${escapeHtml(p.builder)}</div>` : ''}
+            ${p.locality ? `<div class="locality">${localityHtml}</div>` : ''}
+            <div class="price">${escapeHtml(p.price_display || formatPrice(p))}</div>
+            <div class="meta">
+              <span class="status status-${escapeHtml((p.status || 'default'))}">${escapeHtml(statusLabel)}</span>
+              ${handoverHtml ? `<span>${handoverHtml}</span>` : ''}
+              ${p.bhk ? `<span>${escapeHtml(p.bhk)} BHK</span>` : ''}
+            </div>
+            ${p.url ? `<a class="card-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">View on 99acres →</a>` : ''}
+          </article>
+        `;
+      }).join('');
+      container.querySelectorAll('.read-more').forEach(a => {
+        a.addEventListener('click', function(e) {
+          e.preventDefault();
+          const wrap = document.getElementById(this.getAttribute('data-for'));
+          if (wrap && wrap.classList.toggle('expanded')) this.textContent = 'Read less';
+          else if (wrap) this.textContent = 'Read more';
+        });
+      });
+    }
+
+    function formatPrice(p) {
+      if (p.price_min_lakhs != null || p.price_max_lakhs != null) {
+        const min = p.price_min_lakhs ?? p.price_max_lakhs;
+        const max = p.price_max_lakhs ?? p.price_min_lakhs;
+        if (max >= 100) return `₹ ${(min/100).toFixed(2)} - ${(max/100).toFixed(2)} Cr`;
+        return `₹ ${min} - ${max} L`;
+      }
+      return '';
+    }
+
+    function escapeHtml(s) {
+      if (s == null) return '';
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    function sortByHandover(list, order) {
+      if (!order || order === '') return list;
+      const ready = (p) => String(p.handover || '').toLowerCase().includes('ready');
+      // Recent first: 2026, 2027, ... Ready to move, then no date. Late first: 2032, 2031, ... Ready, then no date.
+      const year = (p) => {
+        if (p.handover_year != null) return p.handover_year;
+        if (ready(p)) return order === 'recent' ? -1 : 0;
+        return order === 'recent' ? 9999 : -9999;
+      };
+      return [...list].sort((a, b) => {
+        const ya = year(a), yb = year(b);
+        return order === 'recent' ? ya - yb : yb - ya;
+      });
+    }
+
+    function applyFilters() {
+      const priceMin = parseFloat(document.getElementById('priceMin').value) || null;
+      const priceMax = parseFloat(document.getElementById('priceMax').value) || null;
+      const handoverYear = document.getElementById('handoverYear').value;
+      const status = document.getElementById('status').value.trim();
+      const locality = document.getElementById('locality').value.trim().toLowerCase();
+      const builder = document.getElementById('builder').value.trim().toLowerCase();
+      const sortHandover = document.getElementById('sortHandover').value;
+
+      let filtered = allProperties.filter(p => {
+        if (priceMin != null) {
+          const maxP = p.price_max_lakhs ?? p.price_min_lakhs;
+          if (maxP == null || maxP < priceMin) return false;
+        }
+        if (priceMax != null) {
+          const minP = p.price_min_lakhs ?? p.price_max_lakhs;
+          if (minP == null || minP > priceMax) return false;
+        }
+        if (handoverYear === 'ready') {
+          if (!p.handover || !String(p.handover).toLowerCase().includes('ready')) return false;
+        } else if (handoverYear) {
+          const y = p.handover_year;
+          if (y == null || y !== parseInt(handoverYear, 10)) return false;
+        }
+        if (status && (p.status || '') !== status) return false;
+        if (locality && !(p.locality || '').toLowerCase().includes(locality)) return false;
+        if (builder && !(p.builder || '').toLowerCase().includes(builder)) return false;
+        return true;
+      });
+
+      filtered = sortByHandover(filtered, sortHandover);
+      renderCards(filtered);
+      showCount(filtered.length, allProperties.length);
+    }
+
+    function resetFilters() {
+      document.getElementById('priceMin').value = '';
+      document.getElementById('priceMax').value = '';
+      document.getElementById('handoverYear').value = '';
+      document.getElementById('status').value = '';
+      document.getElementById('locality').value = '';
+      document.getElementById('builder').value = '';
+      document.getElementById('sortHandover').value = '';
+      const sorted = sortByHandover(allProperties, '');
+      renderCards(sorted);
+      showCount(allProperties.length, allProperties.length);
+    }
+
+    function init(data) {
+      allProperties = Array.isArray(data) ? data : [];
+      document.getElementById('loadMsg').textContent = allProperties.length
+        ? `Loaded ${allProperties.length} properties. Use filters and sort below.`
+        : 'No properties. Run scraper.py to generate properties.json.';
+      document.getElementById('filters').style.display = 'flex';
+      const sortHandover = document.getElementById('sortHandover').value;
+      const sorted = sortByHandover(allProperties, sortHandover);
+      renderCards(sorted);
+      showCount(allProperties.length, allProperties.length);
+      document.getElementById('apply').onclick = applyFilters;
+      document.getElementById('reset').onclick = resetFilters;
+    }
+
+    (function initTheme() {
+      const toggle = document.getElementById('themeToggle');
+      const html = document.documentElement;
+      const dark = localStorage.getItem('theme') === 'dark';
+      if (dark) html.classList.add('dark');
+      if (toggle) {
+        toggle.addEventListener('click', function() {
+          html.classList.toggle('dark');
+          const isDark = html.classList.contains('dark');
+          localStorage.setItem('theme', isDark ? 'dark' : 'light');
+          toggle.setAttribute('aria-label', isDark ? 'Switch to light mode' : 'Switch to dark mode');
+          toggle.textContent = isDark ? '☀️' : '🌙';
+        });
+        toggle.textContent = html.classList.contains('dark') ? '☀️' : '🌙';
+      }
+    })();
+
+    (function loadData() {
+      const embedded = document.getElementById('embeddedData');
+      if (embedded && embedded.textContent.trim()) {
+        try {
+          init(JSON.parse(embedded.textContent));
+          return;
+        } catch (e) {}
+      }
+      fetch('properties.json')
+        .then(r => r.ok ? r.json() : Promise.reject(new Error('No file')))
+        .then(init)
+        .catch(() => {
+          document.getElementById('loadMsg').textContent = 'Could not load properties.json. Run scraper.py first, or open this page via a local server (e.g. python -m http.server 8000).';
+          init([]);
+        });
+    })();
+  </script>
+  <script type="application/json" id="embeddedData">
+  </script>
+</body>
+</html>
