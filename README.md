@@ -1,6 +1,6 @@
 # Bangalore Builder Properties
 
-Next.js app that displays Bangalore builder project data (new launch, under construction, ready to move) scraped from **99acres**, with filters and dark mode. Deploy on **Vercel** or run locally.
+Next.js app that displays Bangalore builder project data (new launch, under construction, ready to move) scraped from **99acres** and **NoBroker**, with filters and dark mode. Deploy on **Vercel** or run locally.
 
 ## Run the app (Next.js)
 
@@ -30,7 +30,7 @@ python -m playwright install firefox
 python scraper.py
 ```
 
-This writes to `public/properties.json` in the project root. Use `python scraper.py --quick` for a quick test (1 page per category) or `python scraper.py --max-pages 25` to limit pages.
+This writes to `public/properties.json` in the project root. Data is fetched from both **99acres** (new launch, under construction, ready to move) and **NoBroker** (new projects in Bangalore). By default, NoBroker detail pages are **not** fetched (so the run is faster; some NoBroker entries may show “Contact for price”). Use `python scraper.py --enrich` to fetch each project’s detail page for price, full address, and builder. Use `python scraper.py --quick` for a quick test (1 page per category/source) or `python scraper.py --max-pages 25` to limit pages.
 
 ## Filters
 
@@ -39,6 +39,7 @@ This writes to `public/properties.json` in the project root. Use `python scraper
 - **Status** – New launch, Under construction, Ready to move.
 - **Locality** – Text filter (e.g. Whitefield, Sarjapur).
 - **Builder** – Text filter (e.g. Prestige, Brigade).
+- **Source** – 99acres or NoBroker.
 - **Sort by handover** – Recent first or late first.
 
 Filters and sort update the list in real time. Toggle dark mode with the button in the header.

@@ -3,8 +3,21 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 
 const MAX_VISIBLE = 55
+const PRICE_SLIDER_MAX = 1000 // lakhs (10 Cr)
 const HANDOVER_YEARS = ['', '2026', '2027', '2028', '2029', '2030', '2031', '2032', 'ready'] as const
+const JUNK_NAMES = new Set([
+  'new launch projects in bangalore', 'under construction projects in bangalore',
+  'ready to move projects in bangalore', 'new projects in bangalore', 'projects in bangalore',
+  'upcoming projects in bangalore', 'new projects by reputed bangalore builders in bangalore',
+  'ready to move & pre launch', 'list', 'map', 'filter your search', 'reset', 'sort by',
+  'find other projects matching your search nearby', 'quick links', 'bangalore',
+])
 const SORT_OPTIONS = ['', 'recent', 'late'] as const
+
+function formatPriceLabel(lakhs: number): string {
+  if (lakhs >= 100) return `${(lakhs / 100).toFixed(1)} Cr`
+  return `${lakhs} L`
+}
 
 type Property = {
   id?: string
@@ -78,7 +91,8 @@ function ReadMoreText({
 }
 
 function PropertyCard({ p }: { p: Property }) {
-  const priceStr = p.price_display || formatPrice(p)
+  const hasNumericPrice = p.price_min_lakhs != null || p.price_max_lakhs != null
+  const priceStr = hasNumericPrice ? (p.price_display || formatPrice(p)) : (p.price_display && p.price_display !== 'Price on Demand' ? p.price_display : 'Contact for price')
   const statusLabel = (p.status || '').replace(/_/g, ' ')
   const statusClass =
     p.status === 'new_launch'
@@ -108,7 +122,7 @@ function PropertyCard({ p }: { p: Property }) {
       </div>
       {p.url && (
         <a className="cardLink" href={p.url} target="_blank" rel="noopener noreferrer">
-          View on 99acres →
+          View on {p.source === 'nobroker' ? 'NoBroker' : '99acres'} →
         </a>
       )}
     </article>
@@ -119,12 +133,13 @@ export default function Home() {
   const [properties, setProperties] = useState<Property[]>([])
   const [loading, setLoading] = useState(true)
   const [dark, setDark] = useState(false)
-  const [priceMin, setPriceMin] = useState<string>('')
-  const [priceMax, setPriceMax] = useState<string>('')
+  const [priceMinLakhs, setPriceMinLakhs] = useState(0)
+  const [priceMaxLakhs, setPriceMaxLakhs] = useState(PRICE_SLIDER_MAX)
   const [handoverYear, setHandoverYear] = useState<string>('')
   const [status, setStatus] = useState<string>('')
   const [locality, setLocality] = useState<string>('')
   const [builder, setBuilder] = useState<string>('')
+  const [sourceFilter, setSourceFilter] = useState<string>('')
   const [sortHandover, setSortHandover] = useState<string>('')
 
   useEffect(() => {
@@ -159,40 +174,54 @@ export default function Home() {
   }, [])
 
   const filtered = useMemo(() => {
+    const minPrice = Number(priceMinLakhs)
+    const maxPrice = Number(priceMaxLakhs)
     let list = properties.filter((p) => {
-      const pm = parseFloat(priceMin) || null
-      const px = parseFloat(priceMax) || null
-      if (pm != null) {
-        const maxP = p.price_max_lakhs ?? p.price_min_lakhs
-        if (maxP == null || maxP < pm) return false
+      // Hide page/section titles (not real project names)
+      const name = (p.name || '').trim().toLowerCase().slice(0, 120)
+      if (!name || name.length < 4) return false
+      if (JUNK_NAMES.has(name)) return false
+      if ((name.includes('projects in bangalore') || (name.includes('projects in ') && name.includes('bangalore'))) &&
+          (name.startsWith('new ') || name.startsWith('under ') || name.startsWith('ready ') || name.startsWith('upcoming '))) return false
+      if (name.includes('by reputed') && name.includes('builders') && name.includes('bangalore')) return false
+      // Price: show if property range overlaps [minPrice, maxPrice]
+      if (minPrice > 0 || maxPrice < PRICE_SLIDER_MAX) {
+        const pMin = p.price_min_lakhs != null ? Number(p.price_min_lakhs) : null
+        const pMax = p.price_max_lakhs != null ? Number(p.price_max_lakhs) : null
+        if (minPrice > 0 && (pMax == null || pMax < minPrice)) return false
+        if (maxPrice < PRICE_SLIDER_MAX && (pMin == null || pMin > maxPrice)) return false
       }
-      if (px != null) {
-        const minP = p.price_min_lakhs ?? p.price_max_lakhs
-        if (minP == null || minP > px) return false
-      }
+      // Handover year
       if (handoverYear === 'ready') {
         if (!p.handover || !String(p.handover).toLowerCase().includes('ready')) return false
       } else if (handoverYear) {
-        const y = p.handover_year
-        if (y == null || y !== parseInt(handoverYear, 10)) return false
+        const y = p.handover_year != null ? Number(p.handover_year) : null
+        const selectedYear = parseInt(handoverYear, 10)
+        if (y == null || y !== selectedYear) return false
       }
-      if (status && (p.status || '') !== status) return false
+      // Status
+      if (status && (p.status || '').trim() !== status) return false
+      // Locality (substring match)
       const loc = locality.trim().toLowerCase()
       if (loc && !(p.locality || '').toLowerCase().includes(loc)) return false
+      // Builder (substring match)
       const bld = builder.trim().toLowerCase()
       if (bld && !(p.builder || '').toLowerCase().includes(bld)) return false
+      // Source
+      if (sourceFilter && (p.source || '').trim() !== sourceFilter) return false
       return true
     })
     return sortByHandover(list, sortHandover)
-  }, [properties, priceMin, priceMax, handoverYear, status, locality, builder, sortHandover])
+  }, [properties, priceMinLakhs, priceMaxLakhs, handoverYear, status, locality, builder, sourceFilter, sortHandover])
 
   const resetFilters = useCallback(() => {
-    setPriceMin('')
-    setPriceMax('')
+    setPriceMinLakhs(0)
+    setPriceMaxLakhs(PRICE_SLIDER_MAX)
     setHandoverYear('')
     setStatus('')
     setLocality('')
     setBuilder('')
+    setSourceFilter('')
     setSortHandover('')
   }, [])
 
@@ -219,34 +248,47 @@ export default function Home() {
       <main className="main">
         {loading && <div className="loadMsg">Loading data…</div>}
         {!loading && (
-          <>
-            <div className="loadMsg">
-              {properties.length
-                ? `Loaded ${properties.length} properties. Use filters and sort below.`
-                : 'No properties. Run the scraper to generate public/properties.json.'}
-            </div>
-            <div className="filters">
-              <div className="filterGroup">
-                <label>Price min (Lakhs)</label>
-                <input
-                  type="number"
-                  placeholder="e.g. 50"
-                  min={0}
-                  step={10}
-                  value={priceMin}
-                  onChange={(e) => setPriceMin(e.target.value)}
-                />
-              </div>
-              <div className="filterGroup">
-                <label>Price max (Lakhs)</label>
-                <input
-                  type="number"
-                  placeholder="e.g. 300"
-                  min={0}
-                  step={10}
-                  value={priceMax}
-                  onChange={(e) => setPriceMax(e.target.value)}
-                />
+          <div className="mainLayout">
+            <aside className="sidebar">
+              <div className="sidebarTitle">Filters</div>
+              <div
+                className="filterGroup rangeSliderWrap"
+                style={
+                  {
+                    '--min-pct': `${(priceMinLakhs / PRICE_SLIDER_MAX) * 100}%`,
+                    '--max-pct': `${(priceMaxLakhs / PRICE_SLIDER_MAX) * 100}%`,
+                  } as React.CSSProperties
+                }
+              >
+                <label className="priceRangeLabel">
+                  Price Range
+                </label>
+                <div className="rangeSliderTrack">
+                  <input
+                    type="range"
+                    min={0}
+                    max={priceMaxLakhs}
+                    step={25}
+                    value={priceMinLakhs}
+                    onChange={(e) => setPriceMinLakhs(Number(e.target.value))}
+                    className="slider sliderMin"
+                    aria-label="Price minimum"
+                  />
+                  <input
+                    type="range"
+                    min={priceMinLakhs}
+                    max={PRICE_SLIDER_MAX}
+                    step={25}
+                    value={priceMaxLakhs}
+                    onChange={(e) => setPriceMaxLakhs(Number(e.target.value))}
+                    className="slider sliderMax"
+                    aria-label="Price maximum"
+                  />
+                </div>
+                <div className="priceRangeValues">
+                  <span className="priceRangeMin">{formatPriceLabel(priceMinLakhs)}</span>
+                  <span className="priceRangeMax">{formatPriceLabel(priceMaxLakhs)}</span>
+                </div>
               </div>
               <div className="filterGroup">
                 <label>Handover year</label>
@@ -290,6 +332,14 @@ export default function Home() {
                 />
               </div>
               <div className="filterGroup">
+                <label>Source</label>
+                <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
+                  <option value="">All</option>
+                  <option value="99acres">99acres</option>
+                  <option value="nobroker">NoBroker</option>
+                </select>
+              </div>
+              <div className="filterGroup">
                 <label>Sort by handover</label>
                 <select
                   value={sortHandover}
@@ -300,27 +350,27 @@ export default function Home() {
                   <option value="late">Late handover first</option>
                 </select>
               </div>
-              <div className="filterActions">
-                <span className="count">
-                  {properties.length === 0
-                    ? 'No data'
-                    : `Showing ${filtered.length} of ${properties.length} properties`}
-                </span>
-                <button type="button" className="btn btnSecondary" onClick={resetFilters}>
-                  Reset
-                </button>
+              <button type="button" className="btn btnSecondary resetBtn" onClick={resetFilters}>
+                Reset filters
+              </button>
+            </aside>
+            <div className="content">
+              <div className="loadMsg">
+                {properties.length === 0
+                  ? 'No properties. Run the scraper to generate public/properties.json.'
+                  : `Showing ${filtered.length} of ${properties.length} properties`}
               </div>
-            </div>
-            <div className="cards">
+              <div className="cards">
               {filtered.length === 0 ? (
                 <p className="empty">No properties match the filters.</p>
               ) : (
-                filtered.map((p) => (
-                  <PropertyCard key={p.id || p.name || Math.random()} p={p} />
+                filtered.map((p, i) => (
+                  <PropertyCard key={p.id || p.url || `${p.name}-${i}`} p={p} />
                 ))
               )}
+              </div>
             </div>
-          </>
+          </div>
         )}
       </main>
     </>
