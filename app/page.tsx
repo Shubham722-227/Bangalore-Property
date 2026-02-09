@@ -489,9 +489,33 @@ export default function Home() {
                 {mode === 'builder' ? 'Bangalore Builder Properties' : 'Bank Auctions'}
               </h1>
             </div>
-            <nav className="headerNav">
-              <button type="button" className={`headerNavLink ${mode === 'builder' ? 'active' : ''}`} onClick={() => setMode('builder')}>Properties</button>
-              <button type="button" className={`headerNavLink ${mode === 'auctions' ? 'active' : ''}`} onClick={() => setMode('auctions')}>Bank Auctions</button>
+            <nav className="headerNav" role="tablist" aria-label="Switch between Properties and Auctions">
+              <div className="modeToggle">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === 'builder'}
+                  aria-controls="properties-panel"
+                  id="tab-properties"
+                  className={`modeToggleBtn ${mode === 'builder' ? 'modeToggleBtnActive' : ''}`}
+                  onClick={() => setMode('builder')}
+                >
+                  <span className="material-symbols-outlined">apartment</span>
+                  <span>Properties</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === 'auctions'}
+                  aria-controls="auctions-panel"
+                  id="tab-auctions"
+                  className={`modeToggleBtn ${mode === 'auctions' ? 'modeToggleBtnActive' : ''}`}
+                  onClick={() => setMode('auctions')}
+                >
+                  <span className="material-symbols-outlined">gavel</span>
+                  <span>Auction Properties</span>
+                </button>
+              </div>
             </nav>
           </div>
           <div className="headerRight">
@@ -532,7 +556,7 @@ export default function Home() {
       <main className="main">
         {loading && <div className="loadMsg">Loading data…</div>}
         {!loading && (
-          <div className="mainLayout">
+          <div className="mainLayout" id={mode === 'builder' ? 'properties-panel' : 'auctions-panel'} role="tabpanel" aria-labelledby={mode === 'builder' ? 'tab-properties' : 'tab-auctions'}>
             <aside className="sidebar filter-scrollbar">
               <div className="sidebarHeader">
                 <h3 className="sidebarTitle">Filters</h3>
