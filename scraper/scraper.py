@@ -149,7 +149,9 @@ def fetch(url: str, use_playwright: bool = True) -> str | None:
 
 
 # Shorter timeout for detail-page fetches (avoid hanging on 200+ pages)
+# (connect_sec, read_sec) so a stuck server doesn't block the whole run
 DETAIL_PAGE_TIMEOUT = 10
+DETAIL_PAGE_TIMEOUT_TUPLE = (3, 6)  # 3s connect, 6s read; fail fast if NoBroker/99acres is slow
 
 def fetch_nobroker(url: str) -> str | None:
     """Fetch NoBroker listing page (JS-rendered); fallback to requests."""
@@ -170,12 +172,24 @@ def fetch_nobroker(url: str) -> str | None:
 
 
 def fetch_nobroker_detail(url: str) -> str | None:
-    """Fetch a single NoBroker detail page with requests only (fast, 15s timeout). No Playwright."""
+    """Fetch a single NoBroker detail page with requests only. Uses (connect, read) timeout to avoid hanging."""
     try:
-        r = requests.get(url, headers=REQUEST_HEADERS, timeout=DETAIL_PAGE_TIMEOUT)
+        r = requests.get(url, headers=REQUEST_HEADERS, timeout=DETAIL_PAGE_TIMEOUT_TUPLE)
         r.raise_for_status()
         return r.text
-    except Exception as e:
+    except Exception:
+        return None
+
+
+def fetch_99acres_detail(url: str) -> str | None:
+    """Fetch a single 99acres project detail page (requests only, short timeout)."""
+    if not url or "99acres.com" not in url or "npxid" not in url:
+        return None
+    try:
+        r = requests.get(url, headers=REQUEST_HEADERS, timeout=DETAIL_PAGE_TIMEOUT_TUPLE)
+        r.raise_for_status()
+        return r.text
+    except Exception:
         return None
 
 
@@ -276,6 +290,127 @@ def _is_junk_project_name(name: str) -> bool:
     if "by reputed" in key and "builders" in key and "bangalore" in key:
         return True
     return False
+
+
+def _format_price_display(min_p: float | None, max_p: float | None) -> str:
+    if min_p is None and max_p is None:
+        return ""
+    if min_p is None:
+        min_p = max_p
+    if max_p is None:
+        max_p = min_p
+    if max_p >= 100:
+        return f"₹ {min_p/100:.2f} - {max_p/100:.2f} Cr"
+    return f"₹ {min_p:.2f} - {max_p:.2f} L"
+
+
+def _year_from_possession(possession: str | None) -> int | None:
+    if not possession or "ready" in possession.lower():
+        return None
+    m = re.search(r"\d{4}", possession)
+    return int(m.group(0)) if m else None
+
+
+# Text that indicates nav/filter/UI, not real property data (strip from fields or drop record)
+PROPERTY_JUNK_SUBSTRINGS = (
+    "filter your search", "sort by", "reset", "list", "map", "quick links",
+    "find other projects", "next >>", "<< prev", "bangalore, india", "property list",
+)
+
+# Sane bounds for price (lakhs) and handover year
+PRICE_MAX_LAKHS = 50000
+PRICE_MIN_LAKHS = 0.1
+HANDOVER_YEAR_MIN = 2020
+HANDOVER_YEAR_MAX = 2040
+
+
+def _normalize_str(s: str | None, max_len: int = 200) -> str:
+    """Trim, collapse spaces, and cap length. Empty or only junk -> ''."""
+    if not s or not isinstance(s, str):
+        return ""
+    t = re.sub(r"\s+", " ", s.strip())
+    if not t:
+        return ""
+    for junk in PROPERTY_JUNK_SUBSTRINGS:
+        if junk in t.lower():
+            t = re.sub(re.escape(junk), " ", t, flags=re.I)
+            t = re.sub(r"\s+", " ", t).strip()
+    return t[:max_len] if t else ""
+
+
+def verify_and_clean_property(record: dict) -> dict | None:
+    """
+    Verify and normalize a scraped property record. Returns cleaned record or None if invalid.
+    - Normalizes name, builder, locality, handover, bhk, price_display
+    - Validates price range (min <= max, within sane bounds)
+    - Validates handover_year
+    - Drops records with no usable name or URL
+    """
+    if not record or not isinstance(record, dict):
+        return None
+    url = (record.get("url") or "").strip()
+    if not url or "http" not in url:
+        return None
+
+    name = _normalize_str(record.get("name"), 200)
+    if not name or _is_junk_project_name(name):
+        return None
+    builder = _normalize_str(record.get("builder"), 100)
+    locality = _normalize_str(record.get("locality"), 150)
+    handover = _normalize_str(record.get("handover"), 50)
+    bhk = _normalize_str(record.get("bhk"), 30)
+    price_display = _normalize_str(record.get("price_display"), 80)
+
+    # Price: ensure numeric consistency and sane range
+    try:
+        pmin = record.get("price_min_lakhs")
+        pmax = record.get("price_max_lakhs")
+        if pmin is not None and not isinstance(pmin, (int, float)):
+            pmin = float(pmin) if pmin != "" else None
+        if pmax is not None and not isinstance(pmax, (int, float)):
+            pmax = float(pmax) if pmax != "" else None
+    except (TypeError, ValueError):
+        pmin, pmax = None, None
+    if pmin is not None and (pmin < PRICE_MIN_LAKHS or pmin > PRICE_MAX_LAKHS):
+        pmin = None
+    if pmax is not None and (pmax < PRICE_MIN_LAKHS or pmax > PRICE_MAX_LAKHS):
+        pmax = None
+    if pmin is not None and pmax is not None and pmin > pmax:
+        pmin, pmax = pmax, pmin
+    if pmin is not None or pmax is not None:
+        price_display = _format_price_display(pmin, pmax)
+
+    # Handover year
+    hy = record.get("handover_year")
+    if hy is not None:
+        try:
+            hy = int(hy)
+            if hy < HANDOVER_YEAR_MIN or hy > HANDOVER_YEAR_MAX:
+                hy = None
+        except (TypeError, ValueError):
+            hy = None
+
+    status = (record.get("status") or "").strip().lower()
+    if status not in ("new_launch", "under_construction", "ready_to_move"):
+        status = "new_launch"
+    source = (record.get("source") or "").strip() or "99acres"
+    pid = (record.get("id") or "").strip() or re.sub(r"[^a-zA-Z0-9]", "", url)[-14:]
+
+    return {
+        "id": pid,
+        "source": source,
+        "status": status,
+        "name": name,
+        "builder": builder,
+        "locality": locality,
+        "price_min_lakhs": pmin,
+        "price_max_lakhs": pmax,
+        "price_display": price_display,
+        "handover": handover,
+        "handover_year": hy,
+        "bhk": bhk,
+        "url": url,
+    }
 
 
 def extract_builder_from_title(title: str) -> str:
@@ -390,36 +525,48 @@ def scrape_99acres_list(html: str, base_url: str, status: str) -> list[dict]:
         if not full_url.startswith("http"):
             continue
 
-        # Prefer name & locality from URL (consistent); fallback to DOM
+        # Prefer name & locality from URL (source of truth for which project this link points to).
+        # DOM text often comes from a different card on the listing page and causes wrong names.
         url_name, url_locality = _name_and_locality_from_href(href)
-        name = (a.get_text(strip=True) or "").strip()
-        if len(name) < 5 or len(name) > 200:
-            name = ""
-        parent = a.find_parent(["div", "article", "section", "li"])
-        if parent:
-            for tag in ["h2", "h3", "h4", "strong"]:
-                for h in parent.find_all(tag):
-                    t = (h.get_text(strip=True) or "").strip()
-                    if 5 <= len(t) <= 200 and "Bangalore" not in t:
-                        name = name or t
+        if url_name:
+            name = url_name
+            locality = url_locality or ""
+        else:
+            name = (a.get_text(strip=True) or "").strip()
+            if len(name) < 5 or len(name) > 200:
+                name = ""
+            parent = a.find_parent(["div", "article", "section", "li"])
+            if parent:
+                for tag in ["h2", "h3", "h4", "strong"]:
+                    for h in parent.find_all(tag):
+                        t = (h.get_text(strip=True) or "").strip()
+                        if 5 <= len(t) <= 200 and "Bangalore" not in t:
+                            name = name or t
+                            break
+                    if name:
                         break
-                if name:
-                    break
-        if not name or len(name) < 5:
-            name = url_name or re.sub(r"-npxid.*", "", href.split("/")[-1].replace("-", " ")).title()
-        name = (name or "Project").strip()[:200]
+            if not name or len(name) < 5:
+                name = re.sub(r"-npxid.*", "", href.split("/")[-1].replace("-", " ")).title()
+            name = (name or "Project").strip()[:200]
+            locality = ""
+            block_text = _card_text_for_link(a, soup)
+            loc_m = re.search(r"([A-Za-z\s]+),\s*Bangalore\s*(?:North|South|East|West)", block_text)
+            if loc_m:
+                locality = loc_m.group(1).strip()[:100]
+            if not locality:
+                locality = url_locality
 
-        # Use card-scoped text so price/possession/BHK belong to this listing only
+        # Use card-scoped text for price/possession/BHK only (not name/locality when URL had them)
         block_text = _card_text_for_link(a, soup)
 
         price_min, price_max = parse_price_range(block_text)
         possession = parse_possession(block_text)
-        locality = ""
-        loc_m = re.search(r"([A-Za-z\s]+),\s*Bangalore\s*(?:North|South|East|West)", block_text)
-        if loc_m:
-            locality = loc_m.group(1).strip()[:100]
         if not locality:
-            locality = url_locality
+            loc_m = re.search(r"([A-Za-z\s]+),\s*Bangalore\s*(?:North|South|East|West)", block_text)
+            if loc_m:
+                locality = loc_m.group(1).strip()[:100]
+            if not locality:
+                locality = url_locality
         bhk_match = re.search(r"(\d[\d,\s]*)\s*BHK", block_text)
         bhk = (bhk_match.group(1).strip() if bhk_match else "").strip()
 
@@ -460,25 +607,6 @@ def scrape_99acres_list(html: str, base_url: str, status: str) -> list[dict]:
                 seen.add(r["url"])
                 unique.append(r)
     return unique
-
-
-def _format_price_display(min_p: float | None, max_p: float | None) -> str:
-    if min_p is None and max_p is None:
-        return ""
-    if min_p is None:
-        min_p = max_p
-    if max_p is None:
-        max_p = min_p
-    if max_p >= 100:
-        return f"₹ {min_p/100:.2f} - {max_p/100:.2f} Cr"
-    return f"₹ {min_p:.2f} - {max_p:.2f} L"
-
-
-def _year_from_possession(possession: str | None) -> int | None:
-    if not possession or "ready" in possession.lower():
-        return None
-    m = re.search(r"\d{4}", possession)
-    return int(m.group(0)) if m else None
 
 
 def _nobroker_slug(name: str, locality: str) -> str:
@@ -707,6 +835,98 @@ def _parse_nobroker_detail_page(html: str) -> dict:
     return out
 
 
+def _parse_99acres_detail_page(html: str, page_url: str) -> dict:
+    """Extract canonical name, locality, builder, status, handover, BHK, price from 99acres project detail page."""
+    out = {}
+    if not html or len(html) < 500:
+        return out
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"\s+", " ", text)
+
+    # Name + locality: "Prestige Raintree Park Whitefield, Bangalore" or title "Prestige Raintree Park, Whitefield, Bangalore"
+    m = re.search(r"#\s*([A-Za-z0-9][A-Za-z0-9\s&.\'-]{3,100}?)\s+([A-Za-z][A-Za-z\s]+),\s*Bangalore", text)
+    if m:
+        out["name"] = m.group(1).strip()[:200]
+        out["locality"] = (m.group(2).strip() + ", Bangalore")[:100]
+    if "name" not in out:
+        m = re.search(r"([A-Za-z0-9][A-Za-z0-9\s&.\'-]{3,80}),\s*([A-Za-z][A-Za-z\s]+),\s*Bangalore\s*-\s*Price", text)
+        if m:
+            out["name"] = m.group(1).strip()[:200]
+            out["locality"] = (m.group(2).strip() + ", Bangalore")[:100]
+    if "name" not in out and page_url:
+        url_name, url_locality = _name_and_locality_from_href("/" + page_url.split("/")[-1])
+        if url_name:
+            out["name"] = url_name
+            if url_locality:
+                out["locality"] = url_locality
+
+    # Builder: "Brought to you by Prestige Group," or "About Prestige Group"
+    m = re.search(r"Brought\s+to\s+you\s+by\s+([A-Za-z][A-Za-z0-9\s&.,\'-]+?)\s*[,.]", text, re.I)
+    if m:
+        out["builder"] = m.group(1).strip()[:100]
+    if "builder" not in out:
+        m = re.search(r"About\s+([A-Za-z][A-Za-z0-9\s&.,\'-]{2,60}?)\s+The\s+[A-Za-z]", text, re.I)
+        if m:
+            out["builder"] = m.group(1).strip()[:100]
+    if "builder" not in out and out.get("name"):
+        out["builder"] = extract_builder_from_title(out["name"])
+
+    # Status: "Under Construction" / "Construction Status"
+    if "under construction" in text.lower():
+        out["status"] = "under_construction"
+    elif "ready to move" in text.lower() or "ready to move in" in text.lower():
+        out["status"] = "ready_to_move"
+    elif "new launch" in text.lower():
+        out["status"] = "new_launch"
+
+    # Handover: "Completion from Dec, 2028 onwards" or "Possession in Dec 2028"
+    m = re.search(r"Completion\s+from\s+([A-Za-z]+),\s*(\d{4})\s+onwards", text, re.I)
+    if m:
+        out["handover"] = f"{m.group(1).strip()[:3]} {m.group(2)}"
+        try:
+            out["handover_year"] = int(m.group(2))
+        except ValueError:
+            pass
+    if "handover" not in out:
+        m = re.search(r"Possession\s+(?:in\s+)?([A-Za-z]+\s+\d{4})", text, re.I)
+        if m:
+            out["handover"] = m.group(1).strip()[:50]
+            out["handover_year"] = _year_from_possession(out["handover"])
+    if "handover" not in out and "ready to move" in text.lower():
+        out["handover"] = "Ready to move"
+
+    # Price: "₹ 1.77 - 5.37 Cr" or "₹1.77 - 5.37 Cr"
+    pmin, pmax = parse_price_range(text)
+    if pmin is not None or pmax is not None:
+        out["price_min_lakhs"] = pmin
+        out["price_max_lakhs"] = pmax
+        out["price_display"] = _format_price_display(pmin, pmax)
+
+    # BHK: "1, 2, 3, 4, 5 BHK" or "PRICE RANGE1, 2, 3, 4, 5 BHK"
+    m = re.search(r"(?:PRICE\s*RANGE\s*)?(\d[\d.,\s]*)\s*BHK\s+Apartment", text, re.I)
+    if m:
+        out["bhk"] = m.group(1).strip().replace(" ", "")[:30]
+    if "bhk" not in out:
+        m = re.search(r"(\d[\d.,\s]+)\s*BHK", text)
+        if m:
+            out["bhk"] = m.group(1).strip().replace(" ", "")[:30]
+    return out
+
+
+def _enrich_99acres_from_detail(record: dict) -> None:
+    """Fetch 99acres project detail page and merge canonical name, builder, locality, etc. into record (in place)."""
+    url = record.get("url")
+    if not url or "99acres.com" not in url or "npxid" not in url:
+        return
+    html = fetch_99acres_detail(url)
+    if not html:
+        return
+    details = _parse_99acres_detail_page(html, url)
+    for key, value in details.items():
+        if value is not None and value != "":
+            record[key] = value
+
+
 def _enrich_nobroker_from_detail(record: dict) -> None:
     """Fetch project detail page and merge price, builder, locality, etc. into record (in place)."""
     url = record.get("url")
@@ -819,28 +1039,67 @@ def run_scraper(max_pages_per_category: int | None = None, do_skip_enrich: bool 
             unique.append(p)
     # Drop junk entries (page titles, nav links)
     unique = [p for p in unique if not _is_junk_project_name((p.get("name") or "").strip())]
+    # Verify and clean each record (normalize fields, validate price/handover, drop invalid)
+    before_verify = len(unique)
+    unique = [p for p in (verify_and_clean_property(p) for p in unique) if p is not None]
+    if before_verify > len(unique):
+        print(f"After verification: dropped {before_verify - len(unique)} invalid/incomplete records")
     print(f"Total after deduplication and junk filter: {len(unique)} properties")
 
-    # Enrich NoBroker properties from their detail pages (price, builder, address, etc.)
+    # Enrich from detail pages when --enrich: 99acres and NoBroker get canonical name, builder, locality, etc.
     if not do_skip_enrich:
-        nobroker_list = [p for p in unique if (p.get("source") or "").strip() == "nobroker"]
-        if nobroker_list:
-            print(f"Enriching {len(nobroker_list)} NoBroker properties from detail pages...")
+        # 99acres: fetch each project page to get exact name, locality, builder, handover, BHK
+        acres_list = [p for p in unique if (p.get("source") or "").strip() == "99acres"]
+        if acres_list:
+            total = len(acres_list)
+            print(f"Enriching {total} 99acres properties from detail pages...", flush=True)
             failed = 0
-            for i, p in enumerate(nobroker_list):
+            for i, p in enumerate(acres_list):
+                n = i + 1
+                print(f"  99acres {n}/{total}", flush=True)  # before fetch so progress never "stuck"
                 try:
-                    _enrich_nobroker_from_detail(p)
+                    _enrich_99acres_from_detail(p)
                 except Exception as e:
                     failed += 1
                     if failed <= 3:
-                        print(f"  Skip #{i + 1} ({p.get('name', '')[:40]}...): {e}")
-                if (i + 1) % 20 == 0:
-                    print(f"  Enriched {i + 1}/{len(nobroker_list)}")
-                if i < len(nobroker_list) - 1:
-                    time.sleep(1)  # 1s delay between detail fetches (was 2s)
+                        print(f"  Skip 99acres #{n} ({(p.get('name') or '')[:40]}...): {e}", flush=True)
+                if i < len(acres_list) - 1:
+                    time.sleep(1)
             if failed:
-                print(f"  Skipped {failed} detail pages (timeout or error).")
-            print("  Done.")
+                print(f"  Skipped {failed} 99acres detail pages (timeout or error).", flush=True)
+            print("  99acres done.", flush=True)
+            # Checkpoint save: if you stop during NoBroker, you still have JSON with enriched 99acres
+            try:
+                OUTPUT_JSON.parent.mkdir(parents=True, exist_ok=True)
+                checkpoint = [p for p in (verify_and_clean_property(p) for p in unique) if p is not None]
+                if checkpoint:
+                    with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
+                        json.dump(checkpoint, f, indent=2, ensure_ascii=False)
+                    print(f"  Checkpoint: saved {len(checkpoint)} properties (99acres enriched).", flush=True)
+            except Exception as e:
+                print(f"  Checkpoint save failed: {e}", flush=True)
+        # NoBroker: same as before
+        nobroker_list = [p for p in unique if (p.get("source") or "").strip() == "nobroker"]
+        if nobroker_list:
+            total_nb = len(nobroker_list)
+            print(f"Enriching {total_nb} NoBroker properties from detail pages...", flush=True)
+            failed = 0
+            for i, p in enumerate(nobroker_list):
+                n = i + 1
+                print(f"  NoBroker {n}/{total_nb} ", end="", flush=True)
+                try:
+                    _enrich_nobroker_from_detail(p)
+                    print("ok", flush=True)
+                except Exception as e:
+                    failed += 1
+                    print("skip", flush=True)
+                    if failed <= 3:
+                        print(f"    ({e!s[:80]})", flush=True)
+                if i < len(nobroker_list) - 1:
+                    time.sleep(1)
+            if failed:
+                print(f"  Skipped {failed} detail pages (timeout or error).", flush=True)
+            print("  Done.", flush=True)
 
     return unique
 
@@ -958,6 +1217,10 @@ def main():
         print("NoBroker detail-page enrichment enabled (--enrich)")
     data = run_scraper(max_pages_per_category=max_pages, do_skip_enrich=do_skip_enrich)
     data = ensure_sample_data(data)
+    # Final verification pass before write (normalizes sample data too)
+    data = [p for p in (verify_and_clean_property(p) for p in data) if p is not None]
+    if not data:
+        data = ensure_sample_data([])  # fallback so we always write something
     OUTPUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
