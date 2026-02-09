@@ -14,8 +14,8 @@ const JUNK_NAMES = new Set([
 ])
 const SORT_OPTIONS = ['', 'recent', 'late'] as const
 
-const IMG_FLAT = 'https://i.pinimg.com/1200x/ed/05/a2/ed05a2070669fc34d974b36d9bb31a33.jpg'
-const IMG_LAND = 'https://i.pinimg.com/736x/0c/18/3c/0c183cbe0616533b2f94b62ebe4e557d.jpg'
+const IMG_FLAT = 'https://i.pinimg.com/736x/4b/83/d2/4b83d22d91a30f0b92d3e0eeea82666f.jpg'
+const IMG_LAND = 'https://i.pinimg.com/736x/c3/e3/be/c3e3beab1eea6d3d65a7254e317cdc27.jpg'
 
 const AUCTION_NAV_JUNK = /\.?\s*(Home|About Us|Property List|States|Faqs|Blog|Contact|Register|Login)(\s|$)/gi
 const AUCTION_TRAILING_JUNK = /\s*(Cont|Faq|Stat|Blog|Propert|List|States?)\s*$/gi
