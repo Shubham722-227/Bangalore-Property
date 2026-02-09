@@ -1094,7 +1094,7 @@ def run_scraper(max_pages_per_category: int | None = None, do_skip_enrich: bool 
                     failed += 1
                     print("skip", flush=True)
                     if failed <= 3:
-                        print(f"    ({e!s[:80]})", flush=True)
+                        print(f"    ({str(e)[:80]})", flush=True)
                 if i < len(nobroker_list) - 1:
                     time.sleep(1)
             if failed:
