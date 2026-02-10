@@ -445,7 +445,9 @@ export default function Home() {
         .then((r) => (r.ok ? r.json() : { data: [], total: 0 }))
         .then((res) => {
           const list = Array.isArray(res.data)
-            ? res.data.map(cleanPropertyRecord).filter((p) => (p.name || '').trim().length >= 3 && (p.url || '').startsWith('http'))
+            ? res.data
+                .map(cleanPropertyRecord)
+                .filter((p: Property) => (p.name || '').trim().length >= 3 && (p.url || '').startsWith('http'))
             : []
           setProperties(list)
           setPropertiesTotal(typeof res.total === 'number' ? res.total : 0)
