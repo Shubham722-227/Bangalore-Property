@@ -425,6 +425,39 @@ html, body {
 }
 .summarySortSelect:focus { outline: none; box-shadow: 0 0 0 2px var(--primary); }
 
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  padding: 1rem 0;
+  flex-wrap: wrap;
+}
+.paginationBtn {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.paginationBtn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.paginationBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.paginationInfo {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
 .filters {
   display: flex;
   flex-wrap: wrap;

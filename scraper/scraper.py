@@ -1,17 +1,30 @@
 """
 Bangalore property data scraper for builder projects.
 Scrapes: 99acres (new launch, under construction, ready to move) + NoBroker (new projects).
-Output: public/properties.json for the Next.js viewer.
+Stores each record in SQLite as soon as it's fetched (no large in-memory list).
+Optional: export to public/properties.json for legacy viewer.
 """
 
-import json
 import re
+import sys
 import time
 from pathlib import Path
 from urllib.parse import urljoin
 
+# Allow running as python scraper/scraper.py from project root
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import requests
 from bs4 import BeautifulSoup
+
+from db import (
+    get_connection,
+    get_property_urls_by_source,
+    init_schema,
+    insert_property,
+    property_row_to_dict,
+    update_property,
+)
 
 # --- Config ---
 OUTPUT_JSON = Path(__file__).resolve().parent.parent / "public" / "properties.json"
@@ -971,10 +984,24 @@ def _nobroker_extract_from_raw(html: str, base_url: str) -> list[dict]:
     return results
 
 
-def run_scraper(max_pages_per_category: int | None = None, do_skip_enrich: bool = True) -> list[dict]:
-    """Fetch 99acres + NoBroker; merge, deduplicate. Enrich NoBroker from detail pages only if --enrich."""
-    all_properties = []
+def run_scraper(
+    conn, max_pages_per_category: int | None = None, do_skip_enrich: bool = True
+) -> None:
+    """Fetch 99acres + NoBroker; insert each record into SQLite as soon as it's ready (dedup by url).
+    Optionally enrich from detail pages by reading URLs from DB and updating rows."""
+    init_schema(conn)
     max_pages = max_pages_per_category if max_pages_per_category is not None else 999
+    inserted_this_run = 0
+
+    def flush_items(items: list[dict], source_label: str) -> None:
+        nonlocal inserted_this_run
+        for p in items:
+            if _is_junk_project_name((p.get("name") or "").strip()):
+                continue
+            clean = verify_and_clean_property(p)
+            if clean:
+                insert_property(conn, clean)
+                inserted_this_run += 1
 
     # --- 99acres ---
     for status, url in SOURCE_URLS.items():
@@ -983,7 +1010,7 @@ def run_scraper(max_pages_per_category: int | None = None, do_skip_enrich: bool 
         if html:
             items = scrape_99acres_list(html, url, status)
             print(f"  -> {len(items)} items")
-            all_properties.extend(items)
+            flush_items(items, "99acres")
         time.sleep(REQUEST_DELAY_SEC)
 
     for status, base_url in SOURCE_URLS.items():
@@ -1000,7 +1027,7 @@ def run_scraper(max_pages_per_category: int | None = None, do_skip_enrich: bool 
                 print(f"  -> 0 items, no more pages for {status}")
                 break
             print(f"  -> {len(items)} items")
-            all_properties.extend(items)
+            flush_items(items, "99acres")
             time.sleep(REQUEST_DELAY_SEC)
             page += 1
 
@@ -1010,7 +1037,7 @@ def run_scraper(max_pages_per_category: int | None = None, do_skip_enrich: bool 
     if html:
         items = scrape_nobroker_list(html, NOBROKER_BASE)
         print(f"  -> {len(items)} items")
-        all_properties.extend(items)
+        flush_items(items, "NoBroker")
     time.sleep(REQUEST_DELAY_SEC)
 
     page = 2
@@ -1026,82 +1053,65 @@ def run_scraper(max_pages_per_category: int | None = None, do_skip_enrich: bool 
             print(f"  -> 0 items, no more NoBroker pages")
             break
         print(f"  -> {len(items)} items")
-        all_properties.extend(items)
+        flush_items(items, "NoBroker")
         time.sleep(REQUEST_DELAY_SEC)
         page += 1
 
-    # Deduplicate by URL (same project may appear in multiple sources/pages)
-    seen_urls = set()
-    unique = []
-    for p in all_properties:
-        if p["url"] not in seen_urls:
-            seen_urls.add(p["url"])
-            unique.append(p)
-    # Drop junk entries (page titles, nav links)
-    unique = [p for p in unique if not _is_junk_project_name((p.get("name") or "").strip())]
-    # Verify and clean each record (normalize fields, validate price/handover, drop invalid)
-    before_verify = len(unique)
-    unique = [p for p in (verify_and_clean_property(p) for p in unique) if p is not None]
-    if before_verify > len(unique):
-        print(f"After verification: dropped {before_verify - len(unique)} invalid/incomplete records")
-    print(f"Total after deduplication and junk filter: {len(unique)} properties")
+    cur = conn.execute("SELECT COUNT(*) FROM properties")
+    total = cur.fetchone()[0]
+    print(f"Total properties in DB after listing scrape: {total} (inserted this run: {inserted_this_run})")
 
-    # Enrich from detail pages when --enrich: 99acres and NoBroker get canonical name, builder, locality, etc.
+    # Enrich from detail pages when --enrich: update DB rows with canonical name, builder, locality, etc.
     if not do_skip_enrich:
-        # 99acres: fetch each project page to get exact name, locality, builder, handover, BHK
-        acres_list = [p for p in unique if (p.get("source") or "").strip() == "99acres"]
-        if acres_list:
-            total = len(acres_list)
-            print(f"Enriching {total} 99acres properties from detail pages...", flush=True)
+        acres_urls = get_property_urls_by_source(conn, "99acres")
+        if acres_urls:
+            total_a = len(acres_urls)
+            print(f"Enriching {total_a} 99acres properties from detail pages...", flush=True)
             failed = 0
-            for i, p in enumerate(acres_list):
+            for i, url in enumerate(acres_urls):
                 n = i + 1
-                print(f"  99acres {n}/{total}", flush=True)  # before fetch so progress never "stuck"
+                print(f"  99acres {n}/{total_a}", flush=True)
                 try:
-                    _enrich_99acres_from_detail(p)
+                    html = fetch_99acres_detail(url)
+                    if html:
+                        details = _parse_99acres_detail_page(html, url)
+                        if details:
+                            update_property(conn, url, details)
                 except Exception as e:
                     failed += 1
                     if failed <= 3:
-                        print(f"  Skip 99acres #{n} ({(p.get('name') or '')[:40]}...): {e}", flush=True)
-                if i < len(acres_list) - 1:
+                        print(f"  Skip #{n}: {e}", flush=True)
+                if i < total_a - 1:
                     time.sleep(1)
             if failed:
-                print(f"  Skipped {failed} 99acres detail pages (timeout or error).", flush=True)
+                print(f"  Skipped {failed} 99acres detail pages.", flush=True)
             print("  99acres done.", flush=True)
-            # Checkpoint save: if you stop during NoBroker, you still have JSON with enriched 99acres
-            try:
-                OUTPUT_JSON.parent.mkdir(parents=True, exist_ok=True)
-                checkpoint = [p for p in (verify_and_clean_property(p) for p in unique) if p is not None]
-                if checkpoint:
-                    with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
-                        json.dump(checkpoint, f, indent=2, ensure_ascii=False)
-                    print(f"  Checkpoint: saved {len(checkpoint)} properties (99acres enriched).", flush=True)
-            except Exception as e:
-                print(f"  Checkpoint save failed: {e}", flush=True)
-        # NoBroker: same as before
-        nobroker_list = [p for p in unique if (p.get("source") or "").strip() == "nobroker"]
-        if nobroker_list:
-            total_nb = len(nobroker_list)
+
+        nobroker_urls = get_property_urls_by_source(conn, "nobroker")
+        if nobroker_urls:
+            total_nb = len(nobroker_urls)
             print(f"Enriching {total_nb} NoBroker properties from detail pages...", flush=True)
             failed = 0
-            for i, p in enumerate(nobroker_list):
+            for i, url in enumerate(nobroker_urls):
                 n = i + 1
                 print(f"  NoBroker {n}/{total_nb} ", end="", flush=True)
                 try:
-                    _enrich_nobroker_from_detail(p)
+                    html = fetch_nobroker_detail(url)
+                    if html:
+                        details = _parse_nobroker_detail_page(html)
+                        if details:
+                            update_property(conn, url, details)
                     print("ok", flush=True)
                 except Exception as e:
                     failed += 1
                     print("skip", flush=True)
                     if failed <= 3:
                         print(f"    ({str(e)[:80]})", flush=True)
-                if i < len(nobroker_list) - 1:
+                if i < total_nb - 1:
                     time.sleep(1)
             if failed:
-                print(f"  Skipped {failed} detail pages (timeout or error).", flush=True)
+                print(f"  Skipped {failed} detail pages.", flush=True)
             print("  Done.", flush=True)
-
-    return unique
 
 
 def ensure_sample_data(properties: list[dict]) -> list[dict]:
@@ -1188,9 +1198,10 @@ def ensure_sample_data(properties: list[dict]) -> list[dict]:
 
 
 def main():
-    import sys
+    import json
     quick = "--quick" in sys.argv or "-q" in sys.argv
     do_clear = "--clear" in sys.argv or "-c" in sys.argv
+    do_export_json = "--export-json" in sys.argv
     do_skip_enrich = "--enrich" not in sys.argv  # default: don't enrich (use --enrich to fetch detail pages)
     max_pages = None
     for i, arg in enumerate(sys.argv):
@@ -1204,27 +1215,42 @@ def main():
             break
     if quick:
         max_pages = 1
+    conn = get_connection()
     if do_clear:
-        OUTPUT_JSON.parent.mkdir(parents=True, exist_ok=True)
-        with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
-            json.dump([], f)
-        print("Cleared properties.json. Refetching...")
+        conn.execute("DELETE FROM properties")
+        conn.commit()
+        print("Cleared properties table. Refetching...")
     if quick:
         print("Quick mode: 1 page per category only")
     elif max_pages is not None:
         print(f"Max {max_pages} pages per category (new_launch, under_construction, ready_to_move)")
     if not do_skip_enrich:
-        print("NoBroker detail-page enrichment enabled (--enrich)")
-    data = run_scraper(max_pages_per_category=max_pages, do_skip_enrich=do_skip_enrich)
-    data = ensure_sample_data(data)
-    # Final verification pass before write (normalizes sample data too)
-    data = [p for p in (verify_and_clean_property(p) for p in data) if p is not None]
-    if not data:
-        data = ensure_sample_data([])  # fallback so we always write something
-    OUTPUT_JSON.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    print(f"Saved {len(data)} properties to {OUTPUT_JSON}")
+        print("Detail-page enrichment enabled (--enrich)")
+    run_scraper(conn, max_pages_per_category=max_pages, do_skip_enrich=do_skip_enrich)
+    cur = conn.execute("SELECT COUNT(*) FROM properties")
+    count = cur.fetchone()[0]
+    if count == 0:
+        for sample in ensure_sample_data([]):
+            clean = verify_and_clean_property(sample)
+            if clean:
+                insert_property(conn, clean)
+        print("No data scraped; inserted sample properties into DB.")
+    conn.close()
+    print(f"Properties in SQLite: {count if count else len(ensure_sample_data([]))}")
+
+    if do_export_json:
+        conn = get_connection()
+        cur = conn.execute(
+            "SELECT url, id, source, status, name, builder, locality, price_min_lakhs, price_max_lakhs, "
+            "price_display, handover, handover_year, bhk FROM properties"
+        )
+        rows = cur.fetchall()
+        data = [property_row_to_dict(row) for row in rows]
+        conn.close()
+        OUTPUT_JSON.parent.mkdir(parents=True, exist_ok=True)
+        with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Exported {len(data)} properties to {OUTPUT_JSON}")
 
 
 if __name__ == "__main__":

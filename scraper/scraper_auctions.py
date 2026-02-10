@@ -1,21 +1,25 @@
 """
 Scrape bank auction properties (land, home) from eauctionsindia.com for Bengaluru.
-Output: public/auctions.json for the Next.js viewer (Bank Auctions mode).
-Filters: price, sq ft, bank name, contact, address, category, auction dates.
+Stores each record in SQLite as soon as it's fetched (no large in-memory list).
+Optional: export to public/auctions.json for legacy viewer.
 """
 
-import json
 import re
+import sys
 import time
 from pathlib import Path
 from urllib.parse import urljoin
 
+# Allow running as python scraper/scraper_auctions.py from project root
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import requests
 from bs4 import BeautifulSoup
 
+from db import get_connection, init_schema, insert_auction
+
 # --- Config ---
 # Fetch from filtered search: residential, Bengaluru, Karnataka (~3,887 listings, ~324 pages)
-OUTPUT_JSON = Path(__file__).resolve().parent.parent / "public" / "auctions.json"
 BASE_URL = "https://www.eauctionsindia.com"
 # URL pattern: /search/{page}?category=residential&city=bengaluru&state=karnataka
 SEARCH_BASE = "https://www.eauctionsindia.com/search"
@@ -264,7 +268,10 @@ def parse_detail_page(html: str, url: str, prop_id: str) -> dict | None:
     }
 
 
-def run_scraper() -> list[dict]:
+def run_scraper() -> int:
+    """Fetch listing pages, then each detail page; insert each auction into SQLite immediately. Returns count inserted."""
+    conn = get_connection()
+    init_schema(conn)
     all_ids = []
     # Fetch from: /search/{page}?category=residential&city=bengaluru&state=karnataka
     for page in range(1, MAX_LISTING_PAGES + 1):
@@ -280,7 +287,7 @@ def run_scraper() -> list[dict]:
     unique_ids = list(dict.fromkeys(all_ids))[:MAX_DETAIL_PAGES]
     print(f"Total unique property IDs to fetch: {len(unique_ids)} (capped at {MAX_DETAIL_PAGES})")
 
-    results = []
+    count = 0
     for i, prop_id in enumerate(unique_ids):
         url = f"{BASE_URL}/properties/{prop_id}"
         print(f"  [{i+1}/{len(unique_ids)}] {url}")
@@ -288,45 +295,44 @@ def run_scraper() -> list[dict]:
         if html and len(html) > 1000:
             rec = parse_detail_page(html, url, prop_id)
             if rec:
-                results.append(rec)
+                insert_auction(conn, rec)
+                count += 1
         time.sleep(REQUEST_DELAY_SEC)
-
-    return results
+    conn.close()
+    return count
 
 
 def main():
     print("Scraping eauctionsindia.com — residential, Bengaluru, Karnataka...")
-    data = run_scraper()
-    if not data:
-        data = [
-            {
-                "id": "sample1",
-                "name": "Sample Bank Residential Auction in Bengaluru",
-                "description": "",
-                "price_display": "₹ 45.00 L",
-                "price_lakhs": 45,
-                "emd_display": "",
-                "emd_lakhs": None,
-                "sq_ft": "1200",
-                "bank_name": "SBI",
-                "branch_name": "",
-                "contact": "+91 98765 43210",
-                "contact_person": "",
-                "contact_mobile": "",
-                "address": "Sample layout, Bengaluru",
-                "url": "https://www.eauctionsindia.com/properties/1",
-                "auction_start": "",
-                "auction_end": "",
-                "auction_datetime": "",
-                "category": "Residential",
-                "source": "eauctionsindia",
-            },
-        ]
-        print("No data scraped; using sample record.")
-    OUTPUT_JSON.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    print(f"Saved {len(data)} auctions to {OUTPUT_JSON}")
+    count = run_scraper()
+    conn = get_connection()
+    if count == 0:
+        sample = {
+            "id": "sample1",
+            "name": "Sample Bank Residential Auction in Bengaluru",
+            "description": "",
+            "price_display": "₹ 45.00 L",
+            "price_lakhs": 45,
+            "emd_display": "",
+            "emd_lakhs": None,
+            "sq_ft": "1200",
+            "bank_name": "SBI",
+            "branch_name": "",
+            "contact": "+91 98765 43210",
+            "contact_person": "",
+            "contact_mobile": "",
+            "address": "Sample layout, Bengaluru",
+            "url": "https://www.eauctionsindia.com/properties/1",
+            "auction_start": "",
+            "auction_end": "",
+            "auction_datetime": "",
+            "category": "Residential",
+            "source": "eauctionsindia",
+        }
+        insert_auction(conn, sample)
+        print("No data scraped; inserted sample record into DB.")
+    conn.close()
+    print(f"Auctions in DB: {count if count else 1} (stored in SQLite)")
 
 
 if __name__ == "__main__":

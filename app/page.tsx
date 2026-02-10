@@ -4,6 +4,8 @@ import { useEffect, useState, useMemo, useCallback } from 'react'
 
 const MAX_VISIBLE = 55
 const PRICE_SLIDER_MAX = 1000 // lakhs (10 Cr)
+const PAGE_SIZE = 24
+const PRICE_DEBOUNCE_MS = 450 // wait after slider stops before fetching (keeps slider smooth)
 const HANDOVER_YEARS = ['', '2026', '2027', '2028', '2029', '2030', '2031', '2032', 'ready'] as const
 const JUNK_NAMES = new Set([
   'new launch projects in bangalore', 'under construction projects in bangalore',
@@ -347,14 +349,47 @@ function AuctionCard({ a }: { a: Auction }) {
   )
 }
 
+function buildPropertiesParams(page: number, filters: { priceMin: number; priceMax: number; handoverYear: string; status: string; locality: string; builder: string; source: string; sort: string }) {
+  const p = new URLSearchParams()
+  p.set('page', String(page))
+  p.set('limit', String(PAGE_SIZE))
+  if (filters.priceMin > 0) p.set('priceMin', String(filters.priceMin))
+  if (filters.priceMax < PRICE_SLIDER_MAX) p.set('priceMax', String(filters.priceMax))
+  if (filters.handoverYear) p.set('handoverYear', filters.handoverYear)
+  if (filters.status) p.set('status', filters.status)
+  if (filters.locality.trim()) p.set('locality', filters.locality.trim())
+  if (filters.builder.trim()) p.set('builder', filters.builder.trim())
+  if (filters.source) p.set('source', filters.source)
+  if (filters.sort) p.set('sort', filters.sort)
+  return p.toString()
+}
+
+function buildAuctionsParams(page: number, filters: { priceMin: number; priceMax: number; bank: string; category: string; locality: string }) {
+  const p = new URLSearchParams()
+  p.set('page', String(page))
+  p.set('limit', String(PAGE_SIZE))
+  if (filters.priceMin > 0) p.set('priceMin', String(filters.priceMin))
+  if (filters.priceMax < PRICE_SLIDER_MAX) p.set('priceMax', String(filters.priceMax))
+  if (filters.bank.trim()) p.set('bank', filters.bank.trim())
+  if (filters.category.trim()) p.set('category', filters.category.trim())
+  if (filters.locality.trim()) p.set('locality', filters.locality.trim())
+  return p.toString()
+}
+
 export default function Home() {
   const [mode, setMode] = useState<'builder' | 'auctions'>('builder')
   const [properties, setProperties] = useState<Property[]>([])
   const [auctions, setAuctions] = useState<Auction[]>([])
+  const [propertiesTotal, setPropertiesTotal] = useState(0)
+  const [auctionsTotal, setAuctionsTotal] = useState(0)
+  const [propertiesPage, setPropertiesPage] = useState(1)
+  const [auctionsPage, setAuctionsPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [dark, setDark] = useState(false)
   const [priceMinLakhs, setPriceMinLakhs] = useState(0)
   const [priceMaxLakhs, setPriceMaxLakhs] = useState(PRICE_SLIDER_MAX)
+  const [appliedPriceMinLakhs, setAppliedPriceMinLakhs] = useState(0)
+  const [appliedPriceMaxLakhs, setAppliedPriceMaxLakhs] = useState(PRICE_SLIDER_MAX)
   const [handoverYear, setHandoverYear] = useState<string>('')
   const [status, setStatus] = useState<string>('')
   const [locality, setLocality] = useState<string>('')
@@ -386,83 +421,84 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    Promise.all([
-      fetch('/properties.json').then((r) => (r.ok ? r.json() : [])).catch(() => []),
-      fetch('/auctions.json').then((r) => (r.ok ? r.json() : [])).catch(() => []),
-    ]).then(([propData, auctionData]) => {
-      setProperties(
-        Array.isArray(propData)
-          ? propData.map(cleanPropertyRecord).filter((p) => (p.name || '').trim().length >= 3 && (p.url || '').startsWith('http'))
-          : []
-      )
-      setAuctions(Array.isArray(auctionData) ? auctionData.map(cleanAuctionRecord) : [])
-    }).finally(() => setLoading(false))
-  }, [])
+    const t = setTimeout(() => {
+      setAppliedPriceMinLakhs(priceMinLakhs)
+      setAppliedPriceMaxLakhs(priceMaxLakhs)
+    }, PRICE_DEBOUNCE_MS)
+    return () => clearTimeout(t)
+  }, [priceMinLakhs, priceMaxLakhs])
 
-  const filtered = useMemo(() => {
-    const minPrice = Number(priceMinLakhs)
-    const maxPrice = Number(priceMaxLakhs)
-    let list = properties.filter((p) => {
-      // Hide page/section titles (not real project names)
-      const name = (p.name || '').trim().toLowerCase().slice(0, 120)
-      if (!name || name.length < 4) return false
-      if (JUNK_NAMES.has(name)) return false
-      if ((name.includes('projects in bangalore') || (name.includes('projects in ') && name.includes('bangalore'))) &&
-          (name.startsWith('new ') || name.startsWith('under ') || name.startsWith('ready ') || name.startsWith('upcoming '))) return false
-      if (name.includes('by reputed') && name.includes('builders') && name.includes('bangalore')) return false
-      // Price: show if property range overlaps [minPrice, maxPrice]
-      if (minPrice > 0 || maxPrice < PRICE_SLIDER_MAX) {
-        const pMin = p.price_min_lakhs != null ? Number(p.price_min_lakhs) : null
-        const pMax = p.price_max_lakhs != null ? Number(p.price_max_lakhs) : null
-        if (minPrice > 0 && (pMax == null || pMax < minPrice)) return false
-        if (maxPrice < PRICE_SLIDER_MAX && (pMin == null || pMin > maxPrice)) return false
-      }
-      // Handover year
-      if (handoverYear === 'ready') {
-        if (!p.handover || !String(p.handover).toLowerCase().includes('ready')) return false
-      } else if (handoverYear) {
-        const y = p.handover_year != null ? Number(p.handover_year) : null
-        const selectedYear = parseInt(handoverYear, 10)
-        if (y == null || y !== selectedYear) return false
-      }
-      // Status
-      if (status && (p.status || '').trim() !== status) return false
-      // Locality (substring match)
-      const loc = locality.trim().toLowerCase()
-      if (loc && !(p.locality || '').toLowerCase().includes(loc)) return false
-      // Builder (substring match)
-      const bld = builder.trim().toLowerCase()
-      if (bld && !(p.builder || '').toLowerCase().includes(bld)) return false
-      // Source
-      if (sourceFilter && (p.source || '').trim() !== sourceFilter) return false
-      return true
-    })
-    return sortByHandover(list, sortHandover)
-  }, [properties, priceMinLakhs, priceMaxLakhs, handoverYear, status, locality, builder, sourceFilter, sortHandover])
+  useEffect(() => {
+    setLoading(true)
+    if (mode === 'builder') {
+      const qs = buildPropertiesParams(propertiesPage, {
+        priceMin: appliedPriceMinLakhs,
+        priceMax: appliedPriceMaxLakhs,
+        handoverYear,
+        status,
+        locality,
+        builder,
+        source: sourceFilter,
+        sort: sortHandover,
+      })
+      fetch(`/api/properties?${qs}`)
+        .then((r) => (r.ok ? r.json() : { data: [], total: 0 }))
+        .then((res) => {
+          const list = Array.isArray(res.data)
+            ? res.data.map(cleanPropertyRecord).filter((p) => (p.name || '').trim().length >= 3 && (p.url || '').startsWith('http'))
+            : []
+          setProperties(list)
+          setPropertiesTotal(typeof res.total === 'number' ? res.total : 0)
+        })
+        .catch(() => { setProperties([]); setPropertiesTotal(0) })
+        .finally(() => setLoading(false))
+    } else {
+      const qs = buildAuctionsParams(auctionsPage, {
+        priceMin: appliedPriceMinLakhs,
+        priceMax: appliedPriceMaxLakhs,
+        bank: auctionBank,
+        category: auctionCategory,
+        locality,
+      })
+      fetch(`/api/auctions?${qs}`)
+        .then((r) => (r.ok ? r.json() : { data: [], total: 0 }))
+        .then((res) => {
+          const list = Array.isArray(res.data) ? res.data.map(cleanAuctionRecord) : []
+          setAuctions(list)
+          setAuctionsTotal(typeof res.total === 'number' ? res.total : 0)
+        })
+        .catch(() => { setAuctions([]); setAuctionsTotal(0) })
+        .finally(() => setLoading(false))
+    }
+  }, [
+    mode,
+    propertiesPage,
+    auctionsPage,
+    appliedPriceMinLakhs,
+    appliedPriceMaxLakhs,
+    handoverYear,
+    status,
+    locality,
+    builder,
+    sourceFilter,
+    sortHandover,
+    auctionBank,
+    auctionCategory,
+  ])
 
-  const filteredAuctions = useMemo(() => {
-    const minPrice = Number(priceMinLakhs)
-    const maxPrice = Number(priceMaxLakhs)
-    const bank = auctionBank.trim().toLowerCase()
-    const cat = auctionCategory.trim().toLowerCase()
-    const loc = locality.trim().toLowerCase()
-    return auctions.filter((a) => {
-      if (minPrice > 0 || maxPrice < PRICE_SLIDER_MAX) {
-        const p = a.price_lakhs != null ? Number(a.price_lakhs) : null
-        if (p == null) return maxPrice >= PRICE_SLIDER_MAX && minPrice <= 0
-        if (minPrice > 0 && p < minPrice) return false
-        if (maxPrice < PRICE_SLIDER_MAX && p > maxPrice) return false
-      }
-      if (bank && !(a.bank_name || '').toLowerCase().includes(bank)) return false
-      if (cat && (a.category || '').toLowerCase() !== cat) return false
-      if (loc && !(a.address || '').toLowerCase().includes(loc) && !(a.name || '').toLowerCase().includes(loc)) return false
-      return true
-    })
-  }, [auctions, priceMinLakhs, priceMaxLakhs, auctionBank, auctionCategory, locality])
+  const filtered = useMemo(() => sortByHandover(properties, sortHandover), [properties, sortHandover])
+  const filteredAuctions = auctions
+
+  useEffect(() => {
+    setPropertiesPage(1)
+    setAuctionsPage(1)
+  }, [appliedPriceMinLakhs, appliedPriceMaxLakhs, handoverYear, status, locality, builder, sourceFilter, sortHandover, auctionBank, auctionCategory])
 
   const resetFilters = useCallback(() => {
     setPriceMinLakhs(0)
     setPriceMaxLakhs(PRICE_SLIDER_MAX)
+    setAppliedPriceMinLakhs(0)
+    setAppliedPriceMaxLakhs(PRICE_SLIDER_MAX)
     setHandoverYear('')
     setStatus('')
     setLocality('')
@@ -471,10 +507,17 @@ export default function Home() {
     setSortHandover('')
     setAuctionBank('')
     setAuctionCategory('')
+    setPropertiesPage(1)
+    setAuctionsPage(1)
   }, [])
 
-  const setStatusFromChip = (s: string) => { setStatus(s); }
-  const setCategoryFromChip = (c: string) => { setAuctionCategory(c); }
+  const setStatusFromChip = (s: string) => {
+    setStatus(s)
+  }
+
+  const setCategoryFromChip = (c: string) => {
+    setAuctionCategory(c)
+  }
 
   return (
     <>
@@ -554,9 +597,7 @@ export default function Home() {
         )}
       </div>
       <main className="main">
-        {loading && <div className="loadMsg">Loading data…</div>}
-        {!loading && (
-          <div className="mainLayout" id={mode === 'builder' ? 'properties-panel' : 'auctions-panel'} role="tabpanel" aria-labelledby={mode === 'builder' ? 'tab-properties' : 'tab-auctions'}>
+        <div className="mainLayout" id={mode === 'builder' ? 'properties-panel' : 'auctions-panel'} role="tabpanel" aria-labelledby={mode === 'builder' ? 'tab-properties' : 'tab-auctions'}>
             <aside className="sidebar filter-scrollbar">
               <div className="sidebarHeader">
                 <h3 className="sidebarTitle">Filters</h3>
@@ -751,9 +792,15 @@ export default function Home() {
                     <div>
                       <h2 className="summaryTitle">Bangalore Residential Projects</h2>
                       <p className="summaryCount">
-                        {properties.length === 0
-                          ? 'No properties. Run the scraper to generate public/properties.json.'
-                          : `Showing ${filtered.length} of ${properties.length} properties`}
+                        {loading && mode === 'builder'
+                          ? 'Updating properties…'
+                          : propertiesTotal === 0
+                            ? 'No properties in database. Run scraper/scraper.py to populate data/banglprop.db.'
+                            : (() => {
+                                const from = (propertiesPage - 1) * PAGE_SIZE + 1
+                                const to = Math.min(propertiesPage * PAGE_SIZE, propertiesTotal)
+                                return `Showing ${from}–${to} of ${propertiesTotal} properties`
+                              })()}
                       </p>
                     </div>
                     <div className="summarySort">
@@ -778,6 +825,31 @@ export default function Home() {
                       ))
                     )}
                   </div>
+                  {propertiesTotal > PAGE_SIZE && (
+                    <nav className="pagination" aria-label="Properties pagination">
+                      <button
+                        type="button"
+                        className="paginationBtn"
+                        disabled={propertiesPage <= 1}
+                        onClick={() => setPropertiesPage((p) => Math.max(1, p - 1))}
+                        aria-label="Previous page"
+                      >
+                        Previous
+                      </button>
+                      <span className="paginationInfo">
+                        Page {propertiesPage} of {Math.ceil(propertiesTotal / PAGE_SIZE) || 1}
+                      </span>
+                      <button
+                        type="button"
+                        className="paginationBtn"
+                        disabled={propertiesPage * PAGE_SIZE >= propertiesTotal}
+                        onClick={() => setPropertiesPage((p) => p + 1)}
+                        aria-label="Next page"
+                      >
+                        Next
+                      </button>
+                    </nav>
+                  )}
                 </>
               )}
               {mode === 'auctions' && (
@@ -786,9 +858,15 @@ export default function Home() {
                     <div>
                       <h2 className="summaryTitle">Bank Auctions (Bengaluru)</h2>
                       <p className="summaryCount">
-                        {auctions.length === 0
-                          ? 'No auctions. Run scraper/scraper_auctions.py to generate public/auctions.json.'
-                          : `Showing ${filteredAuctions.length} of ${auctions.length} auctions`}
+                        {loading && mode === 'auctions'
+                          ? 'Updating auctions…'
+                          : auctionsTotal === 0
+                            ? 'No auctions in database. Run scraper/scraper_auctions.py to populate data/banglprop.db.'
+                            : (() => {
+                                const from = (auctionsPage - 1) * PAGE_SIZE + 1
+                                const to = Math.min(auctionsPage * PAGE_SIZE, auctionsTotal)
+                                return `Showing ${from}–${to} of ${auctionsTotal} auctions`
+                              })()}
                       </p>
                     </div>
                   </div>
@@ -801,11 +879,35 @@ export default function Home() {
                       ))
                     )}
                   </div>
+                  {auctionsTotal > PAGE_SIZE && (
+                    <nav className="pagination" aria-label="Auctions pagination">
+                      <button
+                        type="button"
+                        className="paginationBtn"
+                        disabled={auctionsPage <= 1}
+                        onClick={() => setAuctionsPage((p) => Math.max(1, p - 1))}
+                        aria-label="Previous page"
+                      >
+                        Previous
+                      </button>
+                      <span className="paginationInfo">
+                        Page {auctionsPage} of {Math.ceil(auctionsTotal / PAGE_SIZE) || 1}
+                      </span>
+                      <button
+                        type="button"
+                        className="paginationBtn"
+                        disabled={auctionsPage * PAGE_SIZE >= auctionsTotal}
+                        onClick={() => setAuctionsPage((p) => p + 1)}
+                        aria-label="Next page"
+                      >
+                        Next
+                      </button>
+                    </nav>
+                  )}
                 </>
               )}
             </div>
           </div>
-        )}
       </main>
       <footer className="footer">
         <div className="footerInner">
